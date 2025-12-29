@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>모구구 피하기</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #000000 100%);
+            color: white; font-family: 'Montserrat', sans-serif;
+            overflow: hidden; user-select: none;
+        }
+        #game-container { position: relative; width: 100vw; height: 100vh; cursor: none; }
+
+        /* 콩알 커서 */
+        #custom-cursor {
+            position: absolute; width: 8px; height: 8px; background-color: white;
+            border-radius: 50%; pointer-events: none; z-index: 9999;
+            transform: translate(-50%, -50%); box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+        }
+
+        #ui-layer { position: absolute; top: 25px; left: 25px; z-index: 100; }
+        #score-board {
+            font-size: 22px; font-weight: 700; background: rgba(255, 255, 255, 0.1);
+            padding: 10px 25px; border-radius: 30px; border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-bottom: 10px; display: inline-block;
+        }
+        #gauge-container {
+            width: 200px; height: 10px; background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden;
+        }
+        #slow-gauge-bar {
+            width: 100%; height: 100%; background: linear-gradient(90deg, #00d4ff, #0055ff);
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+        .low-gauge { background: linear-gradient(90deg, #ff4444, #ff0000) !important; }
+
+        .enemy { position: absolute; pointer-events: auto; will-change: transform; filter: drop-shadow(0 0 5px rgba(255,255,255,0.3)); }
+
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px);
+            display: flex; justify-content: center; align-items: center; z-index: 1000;
+        }
+        #msg {
+            font-size: 1.8rem; font-weight: 700; cursor: pointer; padding: 40px 60px; text-align: center;
+            background: linear-gradient(145deg, rgba(30,30,40,0.9), rgba(10,10,20,0.9));
+            border: 1px solid rgba(100, 200, 255, 0.3); border-radius: 20px;
+        }
+        .level-flash { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; z-index: 50; pointer-events: none; }
+        .animate-flash { animation: flash-anim 0.5s ease-out; }
+        @keyframes flash-anim { 0% { opacity: 0.4; } 100% { opacity: 0; } }
+        #level-up-text {
+            position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 4rem; font-weight: 900; color: #00d4ff; opacity: 0; z-index: 60; pointer-events: none;
+        }
+        .animate-level-text { animation: level-text-anim 1.2s ease-in-out; }
+        @keyframes level-text-anim {
+            0% { transform: translate(-50%, -30%); opacity: 0; }
+            20% { transform: translate(-50%, -50%); opacity: 1; }
+            80% { transform: translate(-50%, -50%); opacity: 1; }
+            100% { transform: translate(-50%, -70%); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="custom-cursor"></div>
+    <div id="ui-layer">
+        <div id="score-board">SCORE: 0</div>
+        <div id="gauge-container"><div id="slow-gauge-bar"></div></div>
+    </div>
+    <div id="flash-overlay" class="level-flash"></div>
+    <div id="level-up-text">LEVEL UP!</div>
+    <div id="overlay">
+        <div id="msg">READY?<br><span style="font-size:1.2rem; color:#00d4ff; font-weight:400;">클릭 시 시작 (Space: 슬로우)</span></div>
+    </div>
+</div>
+
+<script>
+
+    const bgm = new Audio('bgm.mp3');
+bgm.loop = true;   // 음악이 끝나면 자동으로 처음부터 다시 재생
+bgm.volume = 0.4; // 배경음악은 효과음보다 조금 작게 설정하는 것이 좋습니다
+
+    // 오디오 객체 생성 (파일명이 다르면 이 부분을 수정하세요)
+const levelUpSound = new Audio('levelup.mp3');
+const gameOverSound = new Audio('gameover.mp3');
+
+// 효과음 볼륨 조절 (0.0 ~ 1.0)
+levelUpSound.volume = 0.5;
+gameOverSound.volume = 0.6;
+
+
+    const CONFIG = { gifSize: 45, spawnRate: 170, minSpeed: 1, maxSpeed: 5, gifUrl: 'image.gif' };
+    let score = 0, currentLevel = 0, gameActive = false, mouseX = 0, mouseY = 0;
+    let slowGauge = 100, isSpacePressed = false, timeScale = 1.0;
+
+    const container = document.getElementById('game-container'), overlay = document.getElementById('overlay'), 
+          scoreBoard = document.getElementById('score-board'), gaugeBar = document.getElementById('slow-gauge-bar'), 
+          flashOverlay = document.getElementById('flash-overlay'), levelText = document.getElementById('level-up-text'),
+          customCursor = document.getElementById('custom-cursor');
+
+    window.addEventListener('mousemove', (e) => { 
+        mouseX = e.clientX; mouseY = e.clientY; 
+        customCursor.style.left = mouseX + 'px';
+        customCursor.style.top = mouseY + 'px';
+    });
+
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space') isSpacePressed = true; });
+    window.addEventListener('keyup', (e) => { if (e.code === 'Space') isSpacePressed = false; });
+    overlay.addEventListener('click', startGame);
+
+    function startGame() {
+        score = 0; currentLevel = 0; slowGauge = 100; gameActive = true;
+
+// --- 배경음악 관련 코드 추가 ---
+    bgm.currentTime = 0; // 음악을 처음부터 재생
+    bgm.play();
+    // ----------------------------
+
+        overlay.style.display = 'none';
+        document.querySelectorAll('.enemy').forEach(e => e.remove());
+        requestAnimationFrame(update);
+        spawnEnemy();
+    }
+
+    function spawnEnemy() {
+        if (!gameActive) return;
+        const enemy = document.createElement('img');
+        enemy.src = CONFIG.gifUrl;
+        enemy.className = 'enemy';
+        enemy.style.width = `${CONFIG.gifSize}px`;
+
+        const side = Math.floor(Math.random() * 4);
+        let x, y, vx, vy;
+        const speedMultiplier = 1 + (currentLevel * 0.2);
+
+        if (side === 0) { x = -100; y = Math.random() * window.innerHeight; vx = (Math.random() * (CONFIG.maxSpeed - CONFIG.minSpeed) + CONFIG.minSpeed) * speedMultiplier; vy = (Math.random() - 0.5) * 2; }
+        else if (side === 1) { x = window.innerWidth + 100; y = Math.random() * window.innerHeight; vx = -(Math.random() * (CONFIG.maxSpeed - CONFIG.minSpeed) + CONFIG.minSpeed) * speedMultiplier; vy = (Math.random() - 0.5) * 2; }
+        else if (side === 2) { x = Math.random() * window.innerWidth; y = -100; vx = (Math.random() - 0.5) * 2; vy = (Math.random() * (CONFIG.maxSpeed - CONFIG.minSpeed) + CONFIG.minSpeed) * speedMultiplier; }
+        else { x = Math.random() * window.innerWidth; y = window.innerHeight + 100; vx = (Math.random() - 0.5) * 2; vy = -(Math.random() * (CONFIG.maxSpeed - CONFIG.minSpeed) + CONFIG.minSpeed) * speedMultiplier; }
+
+        enemy.dataset.x = x; enemy.dataset.y = y;
+        enemy.dataset.vx = vx; enemy.dataset.vy = vy;
+        enemy.dataset.phase = 0;
+
+        const rand = Math.random();
+        if (currentLevel === 0) enemy.dataset.pattern = 'linear';
+        else if (currentLevel === 1) enemy.dataset.pattern = rand > 0.8 ? 'sine' : 'linear';
+        else if (currentLevel === 2) enemy.dataset.pattern = rand > 0.6 ? (rand > 0.8 ? 'zigzag' : 'sine') : 'linear';
+        else enemy.dataset.pattern = rand > 0.4 ? (rand > 0.7 ? 'zigzag' : 'sine') : 'linear';
+
+        container.appendChild(enemy);
+        setTimeout(spawnEnemy, Math.max(80, CONFIG.spawnRate - (currentLevel * 40)));
+    }
+
+    function update() {
+    if (!gameActive) return;
+
+    // 슬로우 모션 및 게이지 로직
+    if (isSpacePressed && slowGauge > 0) {
+        timeScale = 0.3;
+        slowGauge -= 0.6;
+        
+        // --- 추가: 슬로우 모션 시 음악 속도 낮춤 ---
+        bgm.playbackRate = 0.5; // 0.5 ~ 0.8 사이를 추천합니다.
+        // ---------------------------------------
+	bgm.volume = 0.1;
+    } else {
+        timeScale = 1.0;
+        if (slowGauge < 100) slowGauge += 0.25;
+        
+        // --- 추가: 평상시 음악 속도 복구 ---
+        bgm.playbackRate = 1.0;
+        // ---------------------------------------
+	bgm.volum = 0.4;
+    }
+    
+    // (이후 게이지 UI 업데이트 및 적 이동 로직...)
+
+        gaugeBar.style.width = `${slowGauge}%`;
+        slowGauge < 20 ? gaugeBar.classList.add('low-gauge') : gaugeBar.classList.remove('low-gauge');
+
+        score += 1;
+        const newLevel = Math.floor(score / 1000); 
+        if (newLevel > currentLevel) { currentLevel = newLevel; triggerLevelUpEffect(); }
+        scoreBoard.innerText = `SCORE: ${Math.floor(score / 10)}`;
+
+        const enemies = document.querySelectorAll('.enemy');
+        enemies.forEach(enemy => {
+            let x = parseFloat(enemy.dataset.x), y = parseFloat(enemy.dataset.y);
+            let vx = parseFloat(enemy.dataset.vx), vy = parseFloat(enemy.dataset.vy);
+            let pattern = enemy.dataset.pattern;
+
+            if (pattern === 'sine') {
+                let phase = parseFloat(enemy.dataset.phase) + 0.1;
+                enemy.dataset.phase = phase;
+                x += (vx + Math.cos(phase) * 6) * timeScale;
+                y += (vy + Math.sin(phase) * 6) * timeScale;
+            } else if (pattern === 'zigzag') {
+                let phase = parseFloat(enemy.dataset.phase) + 0.05;
+                enemy.dataset.phase = phase;
+                const drift = Math.sin(phase * 4) > 0 ? 5 : -5;
+                x += (vx + drift) * timeScale;
+                y += (vy + drift) * timeScale;
+            } else {
+                x += vx * timeScale;
+                y += vy * timeScale;
+            }
+
+            enemy.dataset.x = x; enemy.dataset.y = y;
+            enemy.style.transform = `translate(${x}px, ${y}px)`;
+
+            const rect = enemy.getBoundingClientRect();
+            const dist = Math.hypot(mouseX - (rect.left + rect.width/2), mouseY - (rect.top + rect.height/2));
+
+            // --- [효과 조절 부분 시작] ---
+            const HIT_RANGE = 35;   // 충돌 판정 범위 (작을수록 피하기 쉬움)
+            const GRAZE_RANGE = 80; // 노래지는 효과 및 추가 점수 범위
+
+            if (dist < HIT_RANGE) {
+                gameOver();
+            } 
+            else if (dist < GRAZE_RANGE) {
+                score += 1;
+                // 가까워졌을 때 노래지는 효과 적용 (노란색 광원 및 밝기 증가)
+                enemy.style.filter = 'drop-shadow(0 0 10px #ffff00) brightness(1.3)';
+            } 
+            else {
+                // 평상시 효과 (부드러운 흰색 광원)
+                enemy.style.filter = 'drop-shadow(0 0 5px rgba(255,255,255,0.3))';
+            }
+            // --- [효과 조절 부분 끝] ---
+
+            if (x < -300 || x > window.innerWidth + 300 || y < -300 || y > window.innerHeight + 300) enemy.remove();
+        });
+        requestAnimationFrame(update);
+    }
+
+    function triggerLevelUpEffect() {
+        // 소리 재생 (중첩 재생을 위해 재생 위치를 0으로 초기화)
+    levelUpSound.currentTime = 0;
+    levelUpSound.play();
+
+    flashOverlay.classList.remove('animate-flash');
+    void flashOverlay.offsetWidth;
+    flashOverlay.classList.add('animate-flash');
+
+    levelText.innerText = `LEVEL ${currentLevel + 1}`;
+    levelText.classList.remove('animate-level-text');
+    void levelText.offsetWidth;
+    levelText.classList.add('animate-level-text');
+    }
+
+    function gameOver() {
+        gameActive = false;
+
+    // --- 배경음악 정지 코드 추가 ---
+    bgm.pause(); 
+    // ----------------------------
+    
+    // 게임 오버 소리 재생
+    gameOverSound.currentTime = 0;
+    gameOverSound.play();
+
+    overlay.style.display = 'flex';
+    msg.innerHTML = `GAME OVER<br><span style="font-size:1.2rem; color:#fff;">최종 점수: ${Math.floor(score/10)}</span><br><span style="font-size:1rem; color:#00d4ff;">다시 시작하려면 클릭</span>`;
+    }
+</script>
+</body>
+</html>
